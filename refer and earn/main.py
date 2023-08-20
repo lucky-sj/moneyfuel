@@ -1,15 +1,15 @@
 import logging
+from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
-import pymongo
+# import pymongo
 from pymongo import MongoClient
 from dotenv import load_dotenv
 import os
 
 
-
 load_dotenv()
 connection_string = os.getenv("DB_URL")
-print (connection_string)
+print(connection_string)
 client = MongoClient(connection_string)
 db = client["moneyfuel"]
 print(db)
@@ -42,18 +42,42 @@ ADDRESS, PHONE, FRESHNER_LIST, QUANTITY = range(4)
 
 def start(update, context):
     username = (update.message.from_user.first_name)
-    update.message.reply_text(f'Hi {username} Welcome to Money Fuel to Fuel your money')
+    button = InlineKeyboardButton("Button", callback_data="button_data")
+    markup = InlineKeyboardMarkup([[button]])
+
+    update.message.reply_text(
+        f'Hi {username} Welcome to Money Fuel to Fuel your money')
+    update.message.reply_text(
+        'Please share your location to set your address:', reply_markup=markup)
     return ADDRESS
 
 
-def set_address(update, context):
-    # global address
-    user_name = update.message.from_user.first_name
-    address = update.message.text
-    context.user_data['address'] = address
-    context.user_data['user_name'] = user_name
-    update.message.reply_text("Please enter your phone number: ")
+def location_received(update, context):
+    user = update.message.from_user
+    user_location = update.message.location
+
+    context.user_data['user_name'] = user.first_name
+    context.user_data['location'] = user_location
+
+    update.message.reply_text(
+        "Thanks for sharing your location. Please enter your phone number:")
     return PHONE
+
+
+def set_address(update, context):
+    global address
+    phone = update.message.text
+    user_location = context.user_data.get('location')
+
+    if user_location is None:
+        update.message.reply_text("Please share your location first.")
+        return ADDRESS
+
+    context.user_data['phone'] = phone
+    update.message.reply_text(
+        "Location and phone number saved. Type /order to get a list of Room fresheners.")
+
+    return ConversationHandler.END
 
 
 def set_phone(update, context):
@@ -70,8 +94,13 @@ def cancel(update, context):
 
 
 def order(update, context):
-    update.message.reply_text("Please select a freshner from the list or type /cancel to cancel the procedure." +
-                              "\n".join(f"{i+1}, {freshner}" for i, freshner in enumerate(freshner_list)))
+    reply_keyboard = [['Freshener 1', 'Freshener 2', 'Freshener 3'],
+                      ['Freshener 4', 'Freshener 5', '/cancel']]
+
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+
+    update.message.reply_text(
+        "Please select a freshener from the list or type /cancel to cancel the procedure:", reply_markup=markup)
     return FRESHNER_LIST
 
 
@@ -81,7 +110,6 @@ def set_freshner(update, context):
     if selected_freshner.lower() == "/order":
         update.message.reply_text("Order Cancelled")
         return ConversationHandler.END
-    
 
     context.user_data["selected_freshner"] = selected_freshner
     order_details = {
@@ -90,11 +118,12 @@ def set_freshner(update, context):
         "phone": context.user_data.get('phone'),
         'selected_freshner': context.user_data.get('selected_freshner')
     }
-    mycollection.insert_one(order_details)
+    # mycollection.insert_one(order_details)
     update.message.reply_text(
         f"This is your order. \n{selected_freshner}")
     # return QUANTITY
     return ConversationHandler.END
+
 
 def error(update, context):
     logger.warning('Update "%s" caused error "%s"', update, context.error)
@@ -114,8 +143,8 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
-            ADDRESS: [MessageHandler(Filters.text, set_address)],
-            PHONE: [MessageHandler(Filters.text, set_phone)]
+            ADDRESS: [MessageHandler(Filters.text, set_address),
+                      MessageHandler(Filters.location, location_received)]
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
